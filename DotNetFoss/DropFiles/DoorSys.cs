@@ -26,17 +26,23 @@ namespace DotNetFoss.DropFiles
 
         public IDoorConnection Connection { get; private set; } = null!;
 
-        public DoorSys(ILogger logger, DoorConnectionFactory factory)
+        public DoorSys(ILogger<Door32Sys> logger, DoorConnectionFactory factory)
         {
             _logger = logger;
             _factory = factory;
         }
 
-        public async Task<IDoorSession?> InitializeAsync()
+        public async Task<IDoorSession?> InitializeAsync(string dropFilePath)
         {
             try
             {
-                var dropFile = await GetDropFile();
+                if (dropFilePath == null)
+                    return null;
+
+                if (!string.Equals(Path.GetFileName(dropFilePath), DoorSysFileName, StringComparison.InvariantCultureIgnoreCase))
+                    return null;
+
+                var dropFile = await GetDropFile(dropFilePath);
                 if (dropFile == null)
                     return null;
 
@@ -48,7 +54,9 @@ namespace DotNetFoss.DropFiles
                 Emulation = Emulation.Ascii;
                 DropFile = dropFile;
 
-                throw new NotImplementedException("DOOR.SYS is not supported");
+                Connection = _factory.CreateSerial(dropFile.CommPort, dropFile.BaudRate);
+
+                return this;
             }
             catch (Exception ex)
             {
@@ -56,17 +64,17 @@ namespace DotNetFoss.DropFiles
                 return null;
             }
         }
-        async Task<DoorSysFile?> GetDropFile()
+        async Task<DoorSysFile?> GetDropFile(string dropFilePath)
         {
-            if (!File.Exists(DoorSysFileName))
+            if (!File.Exists(dropFilePath))
             {
-                _logger.LogInformation($"{nameof(DoorSys)} did not file {DoorSysFileName}");
+                _logger.LogInformation($"{nameof(DoorSys)} did not file {dropFilePath}");
                 return null;
             }
 
             try
             {
-                using var file = new StreamReader(DoorSysFileName);
+                using var file = new StreamReader(dropFilePath);
                 return new DoorSysFile
                 {
                     CommPort = await ReadString(),

@@ -37,7 +37,7 @@ public class DoorApplication
 
         foreach (var doorLink in doorLinks)
         {
-            var session = await doorLink.InitializeAsync();
+            var session = await doorLink.InitializeAsync(Args.Length > 0 ? Args[0] : "");
             if (session != null)
             {
                 Session = session;

@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "MyExampleDoor": {
+      "commandName": "Project",
+      "commandLineArgs": "D:\\Work\\Doors\\Thing\\Debug\\net6.0\\door.sys"
+    }
+  }
+}

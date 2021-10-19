@@ -1,38 +1,37 @@
 ﻿using Microsoft.Extensions.Logging;
 using System.Buffers;
 using System.IO.Pipelines;
+using System.IO.Ports;
 using System.Net.Sockets;
 using System.Text;
 
 namespace DotNetFoss.DoorConnections;
 
-public class SocketDoorConnection : IDoorConnection
+public abstract class DoorConnection : IDoorConnection
 {
-    private Pipe _inboundPipe = new Pipe(PipeOptions.Default);
-    private Pipe _outboundPipe = new Pipe(PipeOptions.Default);
-    private Queue<char> _inboundChars = new();
-    private bool _flushOutput;
-    private readonly ILogger _logger;
+    protected Pipe _inboundPipe = new Pipe(PipeOptions.Default);
+    protected Pipe _outboundPipe = new Pipe(PipeOptions.Default);
+    protected Queue<char> _inboundChars = new();
+    protected bool _flushOutput;
+    protected readonly ILogger _logger;
 
     public Encoding Encoding { get; } = Encoding.ASCII;
-
-    public Socket Socket { get; }
 
     public CancellationTokenSource Cancel { get; }
 
     public CancellationToken CancellationToken => Cancel.Token;
 
-    public SocketDoorConnection(Socket socket, ILogger<SocketDoorConnection> logger)
+    public DoorConnection(ILogger logger)
     {
-        Socket = socket;
         _logger = logger;
         Cancel = new CancellationTokenSource();
     }
 
+
     public async Task StartAsync()
     {
-        var outbound = OutboundThread();
-        var inbound = InboundThread();
+        var outbound = OutboundThread(_outboundPipe.Reader);
+        var inbound = InboundThread(_inboundPipe.Writer);
 
         await Task.WhenAll(inbound, outbound);
     }
@@ -40,41 +39,15 @@ public class SocketDoorConnection : IDoorConnection
     /// <summary>
     /// Reads and stores data received from the client until we handle it
     /// </summary>
-    public async Task InboundThread()
-    {
-        var writer = _inboundPipe.Writer;
+    protected abstract Task InboundThread(PipeWriter writer);
 
-        _logger.LogInformation("Inbound pipeline started");
-
-        // TODO -- detect excessive inbound traffic and disconnect
-
-        while (Socket.Available > 0 || !CancellationToken.IsCancellationRequested)
-        {
-            await Task.Yield();
-
-            var bytesAvailable = Socket.Available;
-            if (bytesAvailable == 0)
-                continue;
-
-            var memory = writer.GetMemory(bytesAvailable);
-            var bytesRead = Socket.Receive(memory.Span, SocketFlags.None);
-            writer.Advance(bytesRead);
-            await writer.FlushAsync();
-
-            if (!Socket.Connected)
-                Cancel.Cancel();
-        }
-
-        _logger.LogInformation("Inbound pipeline stopped");
-    }
+    protected abstract void Send(ReadOnlySequence<byte> bytes);
 
     /// <summary>
     /// Sends data out to the client
     /// </summary>
-    public async Task OutboundThread()
+    public async Task OutboundThread(PipeReader reader)
     {
-        var reader = _outboundPipe.Reader;
-
         _logger.LogInformation("Outbound pipeline started");
 
         while (!CancellationToken.IsCancellationRequested)
@@ -89,17 +62,7 @@ public class SocketDoorConnection : IDoorConnection
 
             if (reader.TryRead(out var readResult))
             {
-                if (readResult.Buffer.IsSingleSegment)
-                {
-                    Socket.Send(readResult.Buffer.FirstSpan, SocketFlags.None);
-                }
-                else
-                {
-                    foreach (var span in readResult.Buffer)
-                    {
-                        Socket.Send(span.Span, SocketFlags.None);
-                    }
-                }
+                Send(readResult.Buffer);
 
                 reader.AdvanceTo(readResult.Buffer.End);
             }
@@ -203,5 +166,101 @@ public class SocketDoorConnection : IDoorConnection
         _outboundPipe.Writer.Complete();
         _inboundPipe.Writer.Complete();
         Cancel.Cancel();
+    }
+}
+
+
+public class SerialPortDoorConnection : DoorConnection
+{
+    private readonly SerialPort _serialPort;
+
+    public SerialPortDoorConnection(SerialPort serialPort, ILogger<SerialPortDoorConnection> logger)
+        : base(logger)
+    {
+        _serialPort = serialPort;
+        _serialPort.Open();
+    }
+
+    protected override async Task InboundThread(PipeWriter writer)
+    {
+        _logger.LogInformation("Inbound pipeline started");
+
+        // TODO -- detect excessive inbound traffic and disconnect
+
+        while (_serialPort.BytesToRead > 0 || !CancellationToken.IsCancellationRequested)
+        {
+            await Task.Yield();
+
+            var bytesAvailable = _serialPort.BytesToRead;
+            if (bytesAvailable == 0)
+                continue;
+
+            var memory = writer.GetMemory(bytesAvailable);
+            var bytesRead = _serialPort.Read(memory.ToArray(), 0, bytesAvailable);
+            writer.Advance(bytesRead);
+            await writer.FlushAsync();
+
+            if (!_serialPort.IsOpen)
+                Cancel.Cancel();
+        }
+
+        _logger.LogInformation("Inbound pipeline stopped");
+    }
+
+    protected override void Send(ReadOnlySequence<byte> bytes)
+    {
+        _serialPort.Write(bytes.ToArray(), 0, (int)bytes.Length);
+    }
+}
+
+public class SocketDoorConnection : DoorConnection
+{
+    public Socket Socket { get; }
+
+
+    public SocketDoorConnection(Socket socket, ILogger<SocketDoorConnection> logger) : base(logger)
+    {
+        Socket = socket;
+    }
+
+    protected override void Send(ReadOnlySequence<byte> bytes)
+    {
+        if (bytes.IsSingleSegment)
+        {
+            Socket.Send(bytes.FirstSpan, SocketFlags.None);
+        }
+        else
+        {
+            foreach (var span in bytes)
+            {
+                Socket.Send(span.Span, SocketFlags.None);
+            }
+        }
+    }
+
+    protected override async Task InboundThread(PipeWriter writer)
+    {
+        _logger.LogInformation("Inbound pipeline started");
+
+        // TODO -- detect excessive inbound traffic and disconnect
+
+        while (Socket.Available > 0 || !CancellationToken.IsCancellationRequested)
+        {
+            await Task.Yield();
+
+            var bytesAvailable = Socket.Available;
+            if (bytesAvailable == 0)
+                continue;
+
+            var memory = writer.GetMemory(bytesAvailable);
+            var bytesRead = Socket.Receive(memory.Span, SocketFlags.None);
+            writer.Advance(bytesRead);
+            await writer.FlushAsync();
+
+            if (!Socket.Connected)
+                Cancel.Cancel();
+        }
+
+        _logger.LogInformation("Inbound pipeline stopped");
     }
 }

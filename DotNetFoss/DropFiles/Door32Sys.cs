@@ -23,7 +23,9 @@ public class Door32Sys : IDropFile, IDoorSession
     public string? BbsName { get; private set; }
 
     public Emulation Emulation { get; private set; }
+
     public object? DropFile { get; private set; }
+
     public IDoorConnection Connection { get; private set; } = null!;
 
     public Door32Sys(ILogger<Door32Sys> logger, DoorConnectionFactory factory)
@@ -32,11 +34,17 @@ public class Door32Sys : IDropFile, IDoorSession
         _factory = factory;
     }
 
-    public async Task<IDoorSession?> InitializeAsync()
+    public async Task<IDoorSession?> InitializeAsync(string dropFilePath)
     {
         try
         {
-            var dropFile = await GetDropFile();
+            if (dropFilePath == null)
+                return null;
+
+            if (!string.Equals(Path.GetFileName(dropFilePath), DoorSys32FileName, StringComparison.InvariantCultureIgnoreCase))
+                return null;
+
+            var dropFile = await GetDropFile(dropFilePath);
             if (dropFile == null)
                 return null;
 
@@ -54,7 +62,8 @@ public class Door32Sys : IDropFile, IDoorSession
                     throw new NotImplementedException("CommType of Local in DOOR32.SYS is not supported");
 
                 case CommType.Serial:
-                    throw new NotImplementedException("CommType of Serial in DOOR32.SYS is not supported");
+                    Connection = _factory.CreateSerial($"COM{dropFile.CommHandle}", dropFile.BaudRate);
+                    return this;
 
                 case CommType.Telnet:
                     Connection = _factory.CreateSocket((IntPtr)dropFile.CommHandle);
@@ -77,17 +86,17 @@ public class Door32Sys : IDropFile, IDoorSession
         }
     }
 
-    async Task<Door32SysFile?> GetDropFile()
+    async Task<Door32SysFile?> GetDropFile(string dropFilePath)
     {
-        if (!File.Exists(DoorSys32FileName))
+        if (!File.Exists(dropFilePath))
         {
-            _logger.LogInformation($"{nameof(Door32Sys)} did not file {DoorSys32FileName}");
+            _logger.LogInformation($"{nameof(Door32Sys)} did not file {dropFilePath}");
             return null;
         }
 
         try
         {
-            using var file = new StreamReader(DoorSys32FileName);
+            using var file = new StreamReader(dropFilePath);
             return new Door32SysFile
             {
                 CommType = (CommType)await ReadInt(),
@@ -108,7 +117,7 @@ public class Door32Sys : IDropFile, IDoorSession
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, $"{nameof(Door32Sys)} could not parse {DoorSys32FileName}");
+            _logger.LogWarning(ex, $"{nameof(Door32Sys)} could not parse {dropFilePath}");
             return null;
         }
     }

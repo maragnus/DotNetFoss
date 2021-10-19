@@ -20,5 +20,5 @@ public interface IDropFile
     /// Initialize this DoorLink method, if succcessful, it will be used to interact with the BBS Host
     /// </summary>
     /// <returns>If this link has been established, returns the session.</returns>
-    public Task<IDoorSession?> InitializeAsync();
+    public Task<IDoorSession?> InitializeAsync(string dropFilePath);
 }
