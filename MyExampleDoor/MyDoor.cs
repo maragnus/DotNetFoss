@@ -1,4 +1,6 @@
-﻿using DotNetFoss;
+﻿using System;
+using System.Threading.Tasks;
+using DotNetFoss;
 using DotNetFoss.DoorConnections;
 using DotNetFoss.DropFiles;
 using Microsoft.Extensions.Logging;

@@ -1,4 +1,7 @@
 ﻿
+using System.Threading;
+using System.Threading.Tasks;
+
 namespace DotNetFoss.DoorConnections;
 
 public interface IDoorConnection
